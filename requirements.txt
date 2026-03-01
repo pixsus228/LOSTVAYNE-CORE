@@ -1,0 +1,6 @@
+pyTelegramBotAPI
+psutil
+google-generativeai
+Pillow
+pyautogui
+opencv-python
