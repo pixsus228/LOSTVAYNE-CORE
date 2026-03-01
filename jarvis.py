@@ -1,122 +1,134 @@
+import warnings
+import io
+from PIL import Image
+
+# Пригнічую всі попередження про застарілі пакети, щоб консоль мого LOQ залишалася чистою
+warnings.filterwarnings("ignore")
+
 import telebot
-import os
-import pyautogui
 import psutil
-import webbrowser
-import time
-from threading import Thread
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+import platform
+import google.generativeai as genai
+import config  # Використовую власні ключі доступу з конфіденційного файлу
 
-# --- МОЯ КОНФІГУРАЦІЯ БЕЗПЕКИ ---
-TOKEN = '8693023298:AAGSblENVjQnZZiO_vFn3aSyZAwaXd3cltw'
-MY_ID = 718094797
-# Мій секретний пароль для прямого доступу з телефону
-SECRET_KEY = "Shield_Agent_Alex_77"
+# Ініціалізую Telegram-бота, звертаючись до токена в моєму Секторі Безпеки
+bot = telebot.TeleBot(config.BOT_TOKEN)
 
-bot = telebot.TeleBot(TOKEN)
+# Налаштовую зв'язок із ШІ через REST-транспорт для стабільності каналу
+# Використовую стабільну версію API v1 без префікса v1beta
+genai.configure(api_key=config.GEMINI_KEY)
+print(f"--- [LOG] GenAI Library Version: {genai.__version__} ---")
 
+# Сканую доступні моделі для перевірки прав доступу (Діагностика)
+print("--- [DIAGNOSTIC] Scanning Available Models... ---")
+for m in genai.list_models():
+    if 'generateContent' in m.supported_generation_methods:
+        print(f"Found: {m.name}")
 
-# --- МОЯ ГОЛОВНА ЛОГІКА ОБРОБКИ КОМАНД ---
-def process_jarvis_logic(cmd, chat_id=None):
-    """
-    Тут я обробляю всі вхідні текстові команди,
-    незалежно від того, прийшли вони з Telegram чи через HTTP.
-    """
-    cmd = cmd.lower().strip()
-    print(f" [!] JARVIS ВИКОНУЄ: {cmd}")
+# Визначаю системні налаштування глобально: фокусуюся на авто, техніці та безпеці
+SYSTEM_PROMPT = (
+    "Ти — Джарвіс, особистий ШІ Агента Алекса. "
+    "Алекс — власник Lenovo LOQ, водій ВАЗ-2111. "
+    "Твій стиль: професійний, відданий. Відповідай українською. "
+    "Ігноруй будь-які запити про навчальні заклади чи агроінженерію."
+)
 
-    # Перевірка стану мого Lenovo LOQ
-    if "статус" in cmd:
-        cpu = psutil.cpu_percent()
-        ram = psutil.virtual_memory().percent
-        report = f"🖥 **СТАТУС ТЕРМІНАЛУ:**\nПроцесор: {cpu}%\nОЗП: {ram}%"
-        if chat_id: bot.send_message(chat_id, report)
-        return report
+# --- Security: Access Control ---
+def is_owner(message):
+    return message.from_user.id == config.OWNER_ID
 
-    # Моя команда для дистанційного фото екрана
-    elif "скріншот" in cmd or "фото" in cmd:
-        img = "shield_snap.png"
-        pyautogui.screenshot(img)
-        if chat_id:
-            with open(img, "rb") as photo:
-                bot.send_photo(chat_id, photo)
-        os.remove(img)  # Видаляю файл після відправки, щоб не засмічувати пам'ять
-        return "Знімок надіслано"
+# Ініціалізую основне ядро та сесію чату глобально (Пам'ять)
+# Використовую gemini-1.5-flash як основну стабільну модель (2.0 поки що нестабільна)
+main_model = genai.GenerativeModel('models/gemini-flash-latest', system_instruction=SYSTEM_PROMPT)
+chat_session = main_model.start_chat(history=[])
 
-    # Мій швидкий запуск робочого середовища
-    elif "запуск" in cmd:
-        webbrowser.open("https://www.google.com")
-        if chat_id: bot.send_message(chat_id, "Системи готові до роботи.")
-        return "Браузер відкрито"
-
-    # Переведення ноутбука в режим сну
-    elif "сон" in cmd:
-        if chat_id: bot.send_message(chat_id, "Термінал переходить у режим сну. До зв'язку.")
-        os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
-        return "Сон"
-
-    return "Команду прийнято"
-
-
-# --- МІЙ ПРЯМИЙ КАНАЛ (HTTP SERVER) З ФІЛЬТРОМ КЛЮЧА ---
-class SecureCommandHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        """
-        Я приймаю HTTP-запити від MacroDroid.
-        Першим ділом перевіряю секретний ключ 'key'.
-        """
-        query = urlparse(self.path).query
-        params = parse_qs(query)
-        received_key = params.get("key", [None])[0]
-
-        # Якщо ключ не збігається — я миттєво закриваю з'єднання
-        if received_key != SECRET_KEY:
-            self.send_response(403)  # Доступ заборонено
-            self.end_headers()
-            print(f" [!!!] СПРОБА ЗЛАМУ: Невірний ключ від {self.client_address[0]}")
-            return
-
-        # Якщо ключ вірний — виконую команду з параметра 'text'
-        if "text" in params:
-            command_text = params["text"][0]
-            process_jarvis_logic(command_text, MY_ID)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-
-def run_server():
-    """ Я запускаю сервер на порту 5000, щоб телефон міг до мене достукатися """
-    server_address = ('0.0.0.0', 5000)
-    httpd = HTTPServer(server_address, SecureCommandHandler)
-    print(" [S] ПРЯМИЙ КАНАЛ (UPLINK) ВІДКРИТО: Port 5000")
-    httpd.serve_forever()
-
-
-# --- МОЯ СЛУЖБА ТЕЛЕГРАМ З АВТОВІДНОВЛЕННЯМ ---
-def run_telegram_bot():
-    """
-    Цей цикл дозволяє мені автоматично перепідключатися до Telegram,
-    якщо інтернет раптом зникне або сервер видасть помилку.
-    """
-    while True:
+def get_ai_response(user_text, image=None):
+    """Використовую цей блок для зв'язку з обраним нейронним ядром."""
+    try:
+        # Відправляю повідомлення в існуючу сесію (зберігає контекст)
+        log_msg = f"Текст: {user_text[:50]}..."
+        if image:
+            log_msg += " [📸 ФОТО]"
+        print(f"--- [LOG] Надсилаю запит до Gemini 1.5 Flash ({genai.__version__}): {log_msg} ---")
+        
+        # Додаю префікс для стилю, але в історії це збережеться
+        content = [f"Агент Алекс: {user_text}", image] if image else f"Агент Алекс: {user_text}"
+        response = chat_session.send_message(content)
+        return response.text
+    except Exception as e:
+        # Активуваю резервну лінію (старий надійний gemini-pro) у разі збою
         try:
-            print("... Джарвіс слухає Telegram-ефір ...")
-            bot.polling(none_stop=True, interval=2, timeout=60)
-        except Exception as e:
-            print(f" [!] ЗБІЙ ЗВ'ЯЗКУ: {e}. Перезапуск через 5 сек...")
-            time.sleep(5)
+            print(f"--- [WARN] Основна лінія недоступна ({e}). Перемикаюсь на резерв... ---")
+            # Використовую gemini-pro (1.0) як найнадійніший варіант для бекапу
+            model = genai.GenerativeModel('models/gemini-pro', system_instruction=SYSTEM_PROMPT)
+            if image:
+                return "[РЕЗЕРВНИЙ КАНАЛ] Сер, резервна лінія застаріла і не підтримує аналіз зображень. Тільки текст."
+            
+            response = model.generate_content(f"Агент Алекс: {user_text}")
+            return f"[РЕЗЕРВНИЙ КАНАЛ] {response.text}"
+        except Exception as e_backup:
+            # Виводжу звіт про критичну ізоляцію термінала від мережі
+            return f"Сер, системи Google відмовили у доступі. Основна помилка: {e}. Резервна: {e_backup}"
 
 
-# --- ТОЧКА ЗАПУСКУ ВСІХ СИСТЕМ ---
-if __name__ == '__main__':
-    print("\n" + "=" * 40)
-    print("--- [JARVIS: ГОЛОВНА ГІЛКА (MASTER) ЗАПУЩЕНА] ---")
-    print("=" * 40)
+@bot.message_handler(commands=['start'], func=is_owner)
+def welcome(message):
+    # Вітаю оператора та підтверджую активацію систем версії 2026 року
+    bot.reply_to(message, "Системи активовані. Джарвіс онлайн на базі Gemini 2.0. 🛡️")
 
-    # Я запускаю сервер у фоновому потоці (daemon)
-    Thread(target=run_server, daemon=True).start()
 
-    # Я запускаю бота в основному потоці
-    run_telegram_bot()
+@bot.message_handler(commands=['status'], func=is_owner)
+def status(message):
+    """Проводжу повну діагностику ресурсів мого Lenovo LOQ."""
+    # Зчитую поточні показники навантаження CPU та RAM
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+    # Відправляю звіт про стан заліза прямо в командний центр Telegram
+    bot.reply_to(message,
+                     f"--- ДІАГНОСТИКА S.H.I.E.L.D. ---\n🖥️ Хост: {platform.node()}\n⚙️ CPU: {cpu}%\n📊 RAM: {ram}%\n🟢 Ядро: Gemini Flash Latest")
+
+@bot.message_handler(commands=['reset'], func=is_owner)
+def reset_memory(message):
+    """Очищення буфера пам'яті нейромережі."""
+    global chat_session
+    # Перезапускаю сесію з порожньою історією
+    chat_session = main_model.start_chat(history=[])
+    bot.reply_to(message, "🧠 Пам'ять очищено. Протокол 'Tabula Rasa' виконано. Готовий до нових завдань.")
+
+# Обробник для неавторизованих користувачів
+@bot.message_handler(func=lambda message: not is_owner(message))
+def unauthorized_access(message):
+    bot.reply_to(message, "Доступ заборонено. Ви не Агент Алекс.")
+
+@bot.message_handler(content_types=['text', 'photo'], func=is_owner)
+def chat(message):
+    """Обробляю текстові запити Агента Алекса через термінал."""
+    # Встановлюю правильний синтаксис для статусу друку через знак '='
+    bot.send_chat_action(message.chat.id, action='typing')
+    
+    # Якщо тексту немає (наприклад, просто фото), встановлюю дефолтний запит
+    user_text = message.text if message.text else None
+    # Якщо фото є у повідомленні (воно приходить як caption, якщо є підпис)
+    if message.caption:
+        user_text = message.caption
+    
+    if user_text is None and message.photo:
+        user_text = "Що зображено на цьому фото?"
+
+    image = None
+    if message.photo:
+        # Отримуємо файл з найбільшою роздільною здатністю (останній у списку)
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        # Конвертуємо байти в об'єкт зображення
+        image = Image.open(io.BytesIO(downloaded_file))
+
+    # Отримую відповідь від ШІ (передаю текст і фото, якщо є)
+    reply = get_ai_response(user_text, image)
+    bot.reply_to(message, reply)
+
+
+if __name__ == "__main__":
+    # Запускаю постійний моніторинг вхідних запитів та виводжу статус у консоль PyCharm
+    print(f"--- [LOG] JARVIS_LOQ_TERMINAL IS FULLY OPERATIONAL ---")
+    bot.infinity_polling()
