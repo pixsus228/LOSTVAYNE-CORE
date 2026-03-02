@@ -1,8 +1,14 @@
 import warnings
 import io
 import os
+import json
+import datetime
 import gc
+import sys
+import requests
 import pyautogui
+import speech_recognition as sr
+from pydub import AudioSegment
 from PIL import Image
 
 warnings.filterwarnings("ignore")
@@ -17,95 +23,105 @@ import config
 bot = telebot.TeleBot(config.BOT_TOKEN)
 genai.configure(api_key=config.GEMINI_KEY)
 
+# --- ЛОКАЛЬНА ПАМ'ЯТЬ (JSON) ---
+BRAIN_FILE = "jarvis_brain.json"
+
+
+def save_to_brain(key, value):
+    data = {}
+    if os.path.exists(BRAIN_FILE):
+        with open(BRAIN_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    data[key] = value
+    with open(BRAIN_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def get_from_brain():
+    if os.path.exists(BRAIN_FILE):
+        with open(BRAIN_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def get_current_timestamp():
+    return datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+
+
 SYSTEM_PROMPT = (
     "Ти — Джарвіс, особистий ШІ Агента Алекса. "
     "Алекс — власник Lenovo LOQ, водій ВАЗ-2111. "
     "Твій стиль: професійний, відданий. Відповідай українською."
 )
 
+
 def is_owner(message):
     return message.from_user.id == config.OWNER_ID
 
-# Ініціалізація ядра Gemini
+
+# Ініціалізація ядра Gemini 2.5 Flash
 main_model = genai.GenerativeModel('models/gemini-2.5-flash', system_instruction=SYSTEM_PROMPT)
 chat_session = main_model.start_chat(history=[])
 
-# --- ІНТЕРФЕЙС КНОПОК (REPLY KEYBOARD) ---
+
+# --- ІНТЕРФЕЙС ---
 
 def get_main_keyboard():
-    """Створюю зручну панель кнопок для керування LOQ."""
+    """Створюю розширену панель кнопок для керування LOQ."""
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Формую сітку кнопок 2x2 для зручності великого пальця
-    btn_status = telebot.types.KeyboardButton('📊 СТАТУС')
-    btn_screen = telebot.types.KeyboardButton('📸 СКРІНШОТ')
-    btn_vol_up = telebot.types.KeyboardButton('🔊 ГУЧНІСТЬ +')
-    btn_vol_down = telebot.types.KeyboardButton('🔉 ГУЧНІСТЬ -')
-    
-    markup.row(btn_status, btn_screen)
-    markup.row(btn_vol_up, btn_vol_down)
-    
+    markup.row(telebot.types.KeyboardButton('📊 СТАТУС'), telebot.types.KeyboardButton('📸 СКРІНШОТ'))
+    markup.row(telebot.types.KeyboardButton('🔊 ГУЧНІСТЬ +'), telebot.types.KeyboardButton('🔉 ГУЧНІСТЬ -'))
+    markup.row(telebot.types.KeyboardButton('🌤️ ПОГОДА'), telebot.types.KeyboardButton('🧹 DEEP CLEAN'))
     return markup
 
-# --- РЕЄСТРАЦІЯ ШВИДКОГО МЕНЮ (BLUE BUTTON) ---
 
 def set_main_menu(bot):
-    """Реєструю команди в синій кнопці 'Menu'."""
+    """Реєструю повний перелік команд у меню швидкого доступу."""
     commands = [
         telebot.types.BotCommand("/status", "📊 Статус системи"),
+        telebot.types.BotCommand("/brain", "🧠 Пам'ять"),
+        telebot.types.BotCommand("/weather", "🌤️ Погода Ромни"),
         telebot.types.BotCommand("/screen", "📸 Скріншот"),
-        telebot.types.BotCommand("/volup", "🔊 Гучність +"),
-        telebot.types.BotCommand("/voldown", "🔉 Гучність -"),
-        telebot.types.BotCommand("/sleep", "🌙 Сон"),
+        telebot.types.BotCommand("/volup", "🔊 Гучніше"),
+        telebot.types.BotCommand("/voldown", "🔉 Тихіше"),
+        telebot.types.BotCommand("/mute", "🔇 Вимкнути звук"),
+        telebot.types.BotCommand("/deepclean", "🧹 Глибока очистка"),
+        telebot.types.BotCommand("/reset", "🧠 Перезавантажити ШІ"),
+        telebot.types.BotCommand("/menu", "🔄 Оновити меню"),
+        telebot.types.BotCommand("/sleep", "🌙 Сон (Win)"),
         telebot.types.BotCommand("/shutdown", "🚨 Вимкнути ПК")
     ]
-    # Відправляю список команд на сервери Telegram
     bot.set_my_commands(commands)
 
 
 def get_ai_response(user_text, image=None):
-    """Отримую відповідь від ШІ, враховуючи текстові та візуальні дані."""
+    """Отримую відповідь з основним та резервним каналами."""
     try:
         content = [f"Агент Алекс: {user_text}", image] if image else f"Агент Алекс: {user_text}"
         response = chat_session.send_message(content)
         return response.text
     except Exception as e:
-        # Активуваю резервну лінію (старий надійний gemini-pro) у разі збою
         try:
-            print(f"--- [WARN] Основна лінія недоступна ({e}). Перемикаюсь на резерв... ---")
-            # Використовую gemini-pro (1.0) як найнадійніший варіант для бекапу
-            model = genai.GenerativeModel('models/gemini-pro', system_instruction=SYSTEM_PROMPT)
-            if image:
-                return "[РЕЗЕРВНИЙ КАНАЛ] Сер, резервна лінія застаріла і не підтримує аналіз зображень. Тільки текст."
-            
-            response = model.generate_content(f"Агент Алекс: {user_text}")
-            return f"[РЕЗЕРВНИЙ КАНАЛ] {response.text}"
+            print(f"--- [WARN] Збій 2.5 Flash. Перехід на резерв... ---")
+            backup_model = genai.GenerativeModel('models/gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+            content = [f"Агент Алекс: {user_text}", image] if image else f"Агент Алекс: {user_text}"
+            response = backup_model.generate_content(content)
+            return f"[РЕЗЕРВНИЙ КАНАЛ]\n{response.text}"
         except Exception as e_backup:
-            # Виводжу звіт про критичну ізоляцію термінала від мережі
-            return f"Сер, системи Google відмовили у доступі. Основна помилка: {e}. Резервна: {e_backup}"
+            return f"🚨 Критична відмова: {e_backup}"
 
-# --- БАЗОВІ КОМАНДИ ---
 
-@bot.message_handler(commands=['start'], func=is_owner)
-def welcome(message):
-    """Протокол ініціалізації: активую всі системи та виводжу панель керування."""
-    bot.reply_to(
-        message, 
-        "Протоколи дій активовані. Панель керування LOQ виведена на Ваш термінал, сер. 🛡️",
-        reply_markup=get_main_keyboard()
-    )
+# --- КОМАНДИ ---
 
 @bot.message_handler(commands=['status'], func=is_owner)
 def status(message):
-    """Виконую повну діагностику ресурсів LOQ."""
     cpu = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
-    import datetime
-    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time()) # type: ignore
+    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
     uptime = datetime.datetime.now() - boot_time
-
-    top_procs = sorted(psutil.process_iter(['name', 'memory_info']),
-                       key=lambda x: x.info['memory_info'].rss, reverse=True)[:3]
+    top_procs = sorted(psutil.process_iter(['name', 'memory_info']), key=lambda x: x.info['memory_info'].rss,
+                       reverse=True)[:3]
     procs_list = "".join([f"🔹 {p.info['name']}: {p.info['memory_info'].rss // (1024 ** 2)} MB\n" for p in top_procs])
 
     report = (
@@ -115,102 +131,151 @@ def status(message):
         f"📊 **Пам'ять:** {ram.percent}% ({ram.used // (1024 ** 2)}MB)\n"
         f"💽 **Диск C:** {disk.percent}% (вільно {disk.free // (1024 ** 3)}GB)\n"
         f"⏱️ **Аптайм:** {str(uptime).split('.')[0]}\n\n"
-        f"🔝 **ТОП ПРОЦЕСІВ:**\n{procs_list}" # type: ignore
+        f"🔝 **ТОП ПРОЦЕСІВ:**\n{procs_list}"
     )
     bot.reply_to(message, report, parse_mode='Markdown')
 
-@bot.message_handler(commands=['screen'], func=is_owner)
-def take_screenshot(message):
-    bot.send_chat_action(message.chat.id, action='upload_photo')
-    screen_path = "temp_screen.png"
-    try:
-        screenshot = pyautogui.screenshot()
-        screenshot.save(screen_path)
-        with open(screen_path, 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption="📸 Звіт візуального контролю, сер.")
-        os.remove(screen_path)
-    except Exception as e:
-        bot.reply_to(message, f"🚨 Помилка: {e}")
 
-# --- ПРОТОКОЛ "МЕДІА" (ЗВУК) ---
+@bot.message_handler(commands=['weather'], func=is_owner)
+def get_weather(message):
+    url = f"http://api.openweathermap.org/data/2.5/weather?q=Romny&appid={config.WEATHER_KEY}&units=metric&lang=ua"
+    try:
+        res = requests.get(url).json()
+        temp = res['main']['temp']
+        desc = res['weather'][0]['description']
+        report = f"🌤️ **Погода в Ромнах:** {temp}°C, {desc.capitalize()}\nСер, погодні умови стабільні."
+        bot.reply_to(message, report, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"🚨 Помилка метео-каналу: {e}")
+
+
+# --- ГОЛОСОВИЙ МОДУЛЬ (SPEECH-TO-TEXT) ---
+
+@bot.message_handler(content_types=['voice'], func=is_owner)
+def handle_voice(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    try:
+        file_info = bot.get_file(message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        ogg_path, wav_path = "voice.ogg", "voice.wav"
+
+        with open(ogg_path, 'wb') as f:
+            f.write(downloaded_file)
+
+        audio = AudioSegment.from_ogg(ogg_path)
+        audio.export(wav_path, format="wav")
+
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language="uk-UA")
+
+        response = get_ai_response(text)
+        bot.reply_to(message, f"🎤 Ви сказали: \"{text}\"\n\n🤖 {response}")
+
+        os.remove(ogg_path)
+        os.remove(wav_path)
+    except Exception as e:
+        bot.reply_to(message, f"🚨 Помилка голосового аналізатора: {e}")
+
+
+# --- СИСТЕМНЕ КЕРУВАННЯ ---
 
 @bot.message_handler(commands=['volup'], func=is_owner)
 def volume_up(message):
     for _ in range(5): pyautogui.press('volumeup')
     bot.reply_to(message, "🔊 Гучність збільшено.")
 
+
 @bot.message_handler(commands=['voldown'], func=is_owner)
 def volume_down(message):
     for _ in range(5): pyautogui.press('volumedown')
     bot.reply_to(message, "🔉 Гучність зменшено.")
 
-@bot.message_handler(commands=['mute'], func=is_owner)
-def volume_mute(message):
-    pyautogui.press('volumemute')
-    bot.reply_to(message, "🔇 Стан звуку змінено.")
 
-# --- ПРОТОКОЛ "ЕНЕРГІЯ" (ЖИВЛЕННЯ) ---
+@bot.message_handler(commands=['deepclean'], func=is_owner)
+def deep_clean(message):
+    current_pid = os.getpid()
+    count = 0
+    for proc in psutil.process_iter(['pid', 'name']):
+        if 'python' in proc.info['name'].lower() and proc.info['pid'] != current_pid:
+            try:
+                proc.terminate()
+                count += 1
+            except:
+                pass
+    gc.collect()
+    bot.reply_to(message, f"🧹 **Deep Clean завершено!**\nЗавершено фантомних процесів: {count}")
 
-@bot.message_handler(commands=['sleep'], func=is_owner)
-def system_sleep(message):
-    bot.reply_to(message, "🌙 Перевожу LOQ у режим сну. До зв'язку, сер.")
-    os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
 
 @bot.message_handler(commands=['shutdown'], func=is_owner)
 def system_shutdown(message):
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("ТАК", callback_data="confirm_sd"),
-               telebot.types.InlineKeyboardButton("НІ", callback_data="cancel_sd"))
-    bot.send_message(message.chat.id, "🚨 Ви впевнені, що хочете ВИМКНУТИ систему?", reply_markup=markup)
+    if sys.platform == "win32":
+        markup = telebot.types.InlineKeyboardMarkup()
+        markup.add(telebot.types.InlineKeyboardButton("ТАК", callback_data="confirm_sd"),
+                   telebot.types.InlineKeyboardButton("НІ", callback_data="cancel_sd"))
+        bot.send_message(message.chat.id, "🚨 Ви впевнені, що хочете ВИМКНУТИ ПК?", reply_markup=markup)
+    else:
+        bot.reply_to(message, "⚠️ Доступно тільки для Windows.")
+
 
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_sd", "cancel_sd"])
 def handle_sd_confirm(call):
-    if call.data == "confirm_sd":
-        bot.edit_message_text("☢️ Вимикаю систему. Прощавайте, сер.", call.message.chat.id, call.message.message_id)
+    if call.data == "confirm_sd" and sys.platform == "win32":
+        bot.edit_message_text("☢️ Вимикаю систему...", call.message.chat.id, call.message.message_id)
         os.system("shutdown /s /t 1")
     else:
-        bot.edit_message_text("✅ Операцію скасовано.", call.message.chat.id, call.message.message_id)
+        bot.edit_message_text("✅ Скасовано.", call.message.chat.id, call.message.message_id)
 
-# --- УПРАВЛІННЯ ПАМ'ЯТТЮ ---
 
-@bot.message_handler(commands=['reset'], func=is_owner)
-def reset_memory(message):
-    """Очищення буфера пам'яті нейромережі."""
-    global chat_session
-    chat_session = main_model.start_chat(history=[])
-    gc.collect()
-    bot.reply_to(message, "🧠 Нейронну мережу перезавантажено.")
-
-# --- ОБРОБКА КНОПОК REPLY KEYBOARD ---
-
-@bot.message_handler(func=lambda message: is_owner(message) and message.text in ['📊 СТАТУС', '📸 СКРІНШОТ', '🔊 ГУЧНІСТЬ +', '🔉 ГУЧНІСТЬ -'])
-def handle_keyboard_buttons(message):
-    if message.text == '📊 СТАТУС':
+@bot.message_handler(
+    func=lambda m: is_owner(m) and m.text in ['📊 СТАТУС', '📸 СКРІНШОТ', '🔊 ГУЧНІСТЬ +', '🔉 ГУЧНІСТЬ -', '🌤️ ПОГОДА',
+                                              '🧹 DEEP CLEAN'])
+def handle_kb(message):
+    if 'СТАТУС' in message.text:
         status(message)
-    elif message.text == '📸 СКРІНШОТ':
+    elif 'СКРІНШОТ' in message.text:
         take_screenshot(message)
-    elif message.text == '🔊 ГУЧНІСТЬ +':
+    elif 'ПОГОДА' in message.text:
+        get_weather(message)
+    elif 'DEEP CLEAN' in message.text:
+        deep_clean(message)
+    elif '+' in message.text:
         volume_up(message)
-    elif message.text == '🔉 ГУЧНІСТЬ -':
+    elif '-' in message.text:
         volume_down(message)
 
-# --- ЧАТ З ДЖАРВІСОМ ---
 
-@bot.message_handler(content_types=['text', 'photo'], func=is_owner)
+def take_screenshot(message):
+    path = "screen.png"
+    pyautogui.screenshot().save(path)
+    with open(path, 'rb') as f: bot.send_photo(message.chat.id, f)
+    os.remove(path)
+
+
+@bot.message_handler(content_types=['text', 'photo', 'voice'], func=is_owner)
 def chat(message):
-    bot.send_chat_action(message.chat.id, action='typing')
-    user_text = message.text or message.caption or "Що на фото?"
+    user_text = message.text or message.caption or "Проаналізуй це зображення."
+    if user_text.lower().startswith("запам'ятай, що"):
+        save_to_brain(get_current_timestamp(), user_text.replace("запам'ятай, що", "").strip())
+        bot.reply_to(message, "✅ Збережено в локальний архів.")
+        return
+
+    image = None
     if message.photo:
         file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        with Image.open(io.BytesIO(downloaded_file)) as image:
-            reply = get_ai_response(user_text, image)
-    else:
-        reply = get_ai_response(user_text)
-    bot.reply_to(message, reply)
+        image = Image.open(io.BytesIO(bot.download_file(file_info.file_path)))
+
+    bot.reply_to(message, get_ai_response(user_text, image))
     gc.collect()
 
+
+def clear_console():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
 if __name__ == "__main__":
-    set_main_menu(bot)  # Активую інтерфейс меню перед запуском протоколів зв'язку.
-    print(f"--- [LOG] JARVIS_V2_EVOLUTION (FULL INTERFACE) IS OPERATIONAL ---")
+    clear_console()
+    set_main_menu(bot)
+    print("--- [LOG] JARVIS MARK-4.0 VOICE OPERATIONAL ---")
     bot.infinity_polling()
