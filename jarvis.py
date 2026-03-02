@@ -10,6 +10,9 @@ import pyautogui
 import speech_recognition as sr
 from pydub import AudioSegment
 from PIL import Image
+from gtts import gTTS
+import pygame
+import time # Додано імпорт time
 
 warnings.filterwarnings("ignore")
 
@@ -138,7 +141,7 @@ def status(message):
 
 @bot.message_handler(commands=['weather'], func=is_owner)
 def get_weather(message):
-    url = f"http://api.openweathermap.org/data/2.5/weather?q=Romny&appid={config.WEATHER_KEY}&units=metric&lang=ua"
+    url = f"https://api.openweathermap.org/data/2.5/weather?q=Romny&appid={config.WEATHER_KEY}&units=metric&lang=ua" # Changed to HTTPS
     try:
         res = requests.get(url).json()
         temp = res['main']['temp']
@@ -172,11 +175,46 @@ def handle_voice(message):
 
         response = get_ai_response(text)
         bot.reply_to(message, f"🎤 Ви сказали: \"{text}\"\n\n🤖 {response}")
+        
+        # ДОДАНО: Виклик speak_and_send для голосової відповіді
+        speak_and_send(response, message)
 
         os.remove(ogg_path)
         os.remove(wav_path)
     except Exception as e:
         bot.reply_to(message, f"🚨 Помилка голосового аналізатора: {e}")
+
+
+# --- СИНТЕЗ МОВЛЕННЯ (TEXT-TO-SPEECH) ---
+def speak_and_send(text, message):
+    """Генерую голос та відправляю аудіо-відповідь."""
+    tts = gTTS(text=text, lang='uk')
+    voice_file = "jarvis_voice.mp3" # Змінено назву файлу
+    tts.save(voice_file)
+
+    # 1. Відправляємо в Telegram (щоб було чутно на телефоні або в навушниках телефону)
+    with open(voice_file, 'rb') as voice:
+        bot.send_voice(message.chat.id, voice)
+
+    # 2. Відтворюємо локально на LOSTVAYNE-LOQ (для навушників ПК або динаміків)
+    try:
+        pygame.mixer.quit() # Скидаємо старе, якщо було
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048) # Нові параметри (buffer=2048)
+        
+        pygame.mixer.music.load(voice_file)
+        pygame.mixer.music.play()
+        
+        # Чекаємо, поки договорить
+        while pygame.mixer.music.get_busy():
+            time.sleep(0.1)
+            
+        pygame.mixer.quit()
+    except Exception as e:
+        print(f"--- [LOG] Помилка звуку на LOSTVAYNE-LOQ: {e} ---") # Оновлене повідомлення про помилку
+
+    # 3. Очищуємо тимчасовий файл
+    if os.path.exists(voice_file):
+        os.remove(voice_file)
 
 
 # --- СИСТЕМНЕ КЕРУВАННЯ ---
@@ -266,7 +304,9 @@ def chat(message):
         file_info = bot.get_file(message.photo[-1].file_id)
         image = Image.open(io.BytesIO(bot.download_file(file_info.file_path)))
 
-    bot.reply_to(message, get_ai_response(user_text, image))
+    response_text = get_ai_response(user_text, image)
+    bot.reply_to(message, response_text)
+    speak_and_send(response_text, message)
     gc.collect()
 
 
@@ -277,5 +317,15 @@ def clear_console():
 if __name__ == "__main__":
     clear_console()
     set_main_menu(bot)
-    print("--- [LOG] JARVIS MARK-4.0 VOICE OPERATIONAL ---")
-    bot.infinity_polling()
+    try:
+        # 1. Спробуємо видалити старе з'єднання
+        bot.remove_webhook()
+        time.sleep(1) # Дамо серверу 1 секунду на роздуми
+        
+        print("--- [LOG] JARVIS MARK-4.0 VOICE OPERATIONAL ---")
+        
+        # 2. Запуск з ігноруванням старих повідомлень
+        bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+        
+    except Exception as e:
+        print(f"--- [CRITICAL ERROR] Помилка запуску: {e} ---")

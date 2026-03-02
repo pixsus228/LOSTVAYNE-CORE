@@ -4,3 +4,8 @@ google-generativeai
 Pillow
 pyautogui
 opencv-python
+requests
+SpeechRecognition
+pydub
+gTTS
+pygame
