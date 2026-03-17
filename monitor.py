@@ -1,55 +1,53 @@
 import psutil
-import tkinter as tk
+import asyncio
+from datetime import datetime
 
 
-def show_status_overlay():
-    # 1. Збір метрик LOSTVAYNE-LOQ
-    cpu = psutil.cpu_percent(interval=1)
-    ram = psutil.virtual_memory().percent
-    bat = psutil.sensors_battery()
+# Створив клас для фонового моніторингу системи LOSTVAYNE-LOQ
+class SystemMonitor:
+    def __init__(self):
+        # Ініціалізував стан монітора
+        self.is_running = False
 
-    # Логіка відображення живлення
-    if bat:
-        pwr = f"🔌 {bat.percent}%" if bat.power_plugged else f"🔋 {bat.percent}%"
-    else:
-        pwr = "🔌 AC POWER"
+    async def get_stats(self):
+        # Зібрав актуальні дані про процесор та пам'ять
+        cpu = psutil.cpu_percent(interval=None)  # interval=None для асинхронності
+        ram = psutil.virtual_memory()
 
-    # 2. Створення UI
-    overlay = tk.Tk()
-    overlay.attributes("-topmost", True)  # Поверх усіх вікон
-    overlay.attributes("-alpha", 0.85)  # Напівпрозорість
-    overlay.overrideredirect(True)  # Без рамок Windows
+        return {
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "cpu": f"{cpu}%",
+            "ram_percent": ram.percent,
+            "ram_gb": round(ram.available / (1024 ** 3), 2)
+        }
 
-    # Позиціонування: зверху справа (підберіть під свій монітор)
-    # Формат: "ШиринаxВисота+X+Y"
-    overlay.geometry("220x60+1650+30")
-    overlay.configure(bg='#0a0a0a')
+    async def start(self, interval=5):
+        # Запустив цикл моніторингу, що не блокує систему
+        self.is_running = True
+        print("Сер, систему моніторингу активовано.")
 
-    # Текст у стилі термінала S.H.I.E.L.D.
-    display_text = f"CPU: {cpu}% | RAM: {ram}%\nPWR: {pwr}\n[MARK-4.0 ACTIVE]"
-    label = tk.Label(overlay, text=display_text, fg="#00FF41", bg="#0a0a0a", font=("Consolas", 9, "bold"))
-    label.pack(expand=True)
+        while self.is_running:
+            stats = await self.get_stats()
 
-    # Функції для перетягування вікна
-    def _start_drag(event):
-        overlay._x = event.x
-        overlay._y = event.y
+            # Додав логіку сповіщення про перевантаження (Memory Optimization)
+            if stats['ram_percent'] > 90:
+                print(f"⚠️ УВАГА, Сер! Навантаження на RAM критичне: {stats['ram_percent']}%")
 
-    def _on_drag(event):
-        deltax = event.x - overlay._x
-        deltay = event.y - overlay._y
-        x = overlay.winfo_x() + deltax
-        y = overlay.winfo_y() + deltay
-        overlay.geometry(f"+{x}+{y}")
+            # Вивів логіку в консоль для тестування
+            # print(f"[{stats['time']}] CPU: {stats['cpu']} | RAM: {stats['ram_percent']}%")
 
-    # Прив'язка подій миші до вікна (або до label, що покриває вікно)
-    label.bind("<ButtonPress-1>", _start_drag)
-    label.bind("<B1-Motion>", _on_drag)
+            await asyncio.sleep(interval)  # Асинхронна пауза, не фрізить код
 
-    # 3. Самознищення через 5000 мс (5 сек)
-    overlay.after(5000, overlay.destroy)
-    overlay.mainloop()
+    def stop(self):
+        # Зупинив процес
+        self.is_running = False
+        print("Сер, моніторинг переведено в режим очікування.")
 
 
+# Тестовий запуск ядра монітора
 if __name__ == "__main__":
-    show_status_overlay()
+    monitor = SystemMonitor()
+    try:
+        asyncio.run(monitor.start())
+    except KeyboardInterrupt:
+        monitor.stop()
