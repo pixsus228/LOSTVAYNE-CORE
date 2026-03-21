@@ -1,6 +1,5 @@
-﻿config.py
 .env
+venv/
 .idea/
 __pycache__/
-.venv/
 *.pyc
