@@ -1,12 +1,19 @@
+import os
 import google.generativeai as genai
-# Використовую Ваш ключ для перевірки доступних ресурсів
-genai.configure(api_key="AIzaSyCmPdfidqaXHw85o3Xw-wWVqRaOuBmSWf4")
+from dotenv import load_dotenv
 
-print("--- ДОСТУПНІ МОДЕЛІ (STABLE V1) ---")
-try:
-    for m in genai.list_models():
-        # Шукаю моделі, які підтримують генерацію контенту
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"Доступно: {m.name}")
-except Exception as e:
-    print(f"Помилка доступу: {e}")
+# Завантажив налаштування
+load_dotenv()
+api_key = os.getenv("GG_API_KEY")
+
+if not api_key:
+    print("❌ Сер, GG_API_KEY не знайдено в .env!")
+else:
+    genai.configure(api_key=api_key)
+    print("--- ДОСТУПНІ МОДЕЛІ ---")
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(f"Доступно: {m.name}")
+    except Exception as e:
+        print(f"Помилка доступу: {e}")
