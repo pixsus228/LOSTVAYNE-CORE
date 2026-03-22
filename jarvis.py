@@ -1,13 +1,24 @@
 import asyncio
 import sys
+import os
+from dotenv import load_dotenv
 from core.sensors import SystemMonitor
 from core.logic import JarvisLogic
 
 class JarvisCore:
     def __init__(self):
+        load_dotenv()
+        self._verify_env()
         self.monitor = SystemMonitor()
         self.logic = JarvisLogic()
         self.is_active = True
+
+    def _verify_env(self):
+        required = ["TG_TOKEN", "GG_API_KEY"]
+        if not all(os.getenv(k) for k in required):
+            print("❌ Сер, критична помилка: Ключі у .env відсутні.")
+            sys.exit(1)
+        print("✅ Безпечне з'єднання встановлено.")
 
     async def handle_input(self):
         loop = asyncio.get_event_loop()
@@ -15,17 +26,20 @@ class JarvisCore:
 
     async def process_command(self, cmd):
         cmd = cmd.lower().strip()
-        if cmd in ["статус", "status", "1"]:
+        if cmd in ["статус", "1"]:
             s = await self.monitor.get_stats()
             print(f"📊 СТАН: CPU: {s['cpu']} | RAM: {s['ram_percent']}%")
-        elif cmd in ["очистити", "optimize", "2"]:
+        elif cmd in ["очистити", "2"]:
             freed = await self.monitor.optimize_memory()
             print(f"🧹 Вивільнено: {freed} GB, Сер.")
-        elif cmd in ["вихід", "exit", "0"]:
+        elif cmd in ["фарм", "3"]:
+            from core.jr_sync import JavaRushSync
+            url = input("🔗 Сер, вставте посилання на лекцію: ")
+            sync = JavaRushSync()
+            await sync.auto_farm(url)
+        elif cmd in ["вихід", "0"]:
             self.is_active = False
-        elif not cmd:
-            pass
-        else:
+        elif cmd:
             print("🤖 JARVIS думає...")
             response = await self.logic.think(cmd)
             print(f"\n{response}\n")
@@ -46,4 +60,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(jarvis.run())
     except KeyboardInterrupt:
-        sys.exit(0)
+        print("\nСер, систему вимкнено.")
