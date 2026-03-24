@@ -1,20 +1,38 @@
-# Секрети та налаштування
+# --- СЕКРЕТИ ТА КОНФІДЕНЦІЙНІСТЬ ---
 .env
 secret.key
+credentials.py
+token.json
+*.session
+*.session-journal
 
-# Віртуальне середовище
+# --- ВІРТУАЛЬНЕ СЕРЕДОВИЩЕ ТА IDE ---
 .venv/
 venv/
+ENV/
 .idea/
+.vscode/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# Бази даних та логи
+# --- БАЗИ ДАНИХ ТА ДИНАМІЧНІ ДАНІ ---
 *.db
+*.db-journal
 *.log
 data/
-engine/data/*.db
-current_context.txt
+engine/data/
+!engine/data/.gitkeep
 
-# Тимчасові файли
+# --- ТИМЧАСОВІ ФАЙЛИ ТА БЕКАПИ ---
 backups/
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+
+# --- СИСТЕМНІ ФАЙЛИ WINDOWS ---
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
