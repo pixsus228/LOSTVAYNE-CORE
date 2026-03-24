@@ -2,8 +2,8 @@ import asyncio
 import sys
 import os
 from dotenv import load_dotenv
-from core.sensors import SystemMonitor
-from core.ghost_mode import GhostMode
+from engine.sensors import SystemMonitor
+from engine.ghost_mode import GhostMode
 
 class JarvisCore:
     def __init__(self):

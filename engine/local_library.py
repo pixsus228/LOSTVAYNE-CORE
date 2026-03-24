@@ -53,4 +53,4 @@ if __name__ == "__main__":
         # об'єднав аргументи, якщо запит з кількох слів
         search_brain(" ".join(sys.argv[1:]))
     else:
-        print("[?] Сер, вкажіть тему. Наприклад: python engine/knowledge.py словник")
+        print("[?] Сер, вкажіть тему. Наприклад: python engine/local_library.py словник")
