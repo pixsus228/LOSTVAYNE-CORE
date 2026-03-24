@@ -1,14 +1,20 @@
-<<<<<<< HEAD
+# Секрети та налаштування
 .env
+secret.key
+
+# Віртуальне середовище
+.venv/
 venv/
 .idea/
 __pycache__/
 *.pyc
-=======
-﻿.venv/
-__pycache__/
-data/*.db
-backups/
+
+# Бази даних та логи
+*.db
+*.log
+data/
+engine/data/*.db
 current_context.txt
-.env
->>>>>>> e858f17 (feat: додано тихий режим та пам'ять)
+
+# Тимчасові файли
+backups/
